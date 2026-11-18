@@ -9,3 +9,4 @@ ui/dist/
 .env.local
 .env.*.local
 .pytest_cache/
+*.tsbuildinfo
