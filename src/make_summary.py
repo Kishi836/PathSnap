@@ -83,21 +83,31 @@ def latest_runs(emission):
 vt = latest_runs("distance")
 hmm_top1 = wmean(vt.acc_viterbi, vt.n_ref_points)
 hmm_cont = wmean(vt.continuity_viterbi, vt.n_ref_points)
+hmm_moving = wmean(vt.acc_viterbi_moving, vt.n_moving_points)
 ref_cont = wmean(vt.continuity_reference, vt.n_ref_points)
-vc = latest_runs("classifier")   # classifier emissions, decoder at its pre-sweep defaults
-clf_hmm_top1 = wmean(vc.acc_viterbi, vc.n_ref_points)
+
+# headline metric: moving points only (parked points, < 20 m moved in 30 s, have ambiguous reference arcs)
+n_moving = (~pd.read_csv(R / "obs_labels_student_test.csv", dtype={"trip_id": str})
+            .set_index("trip_id").stationary).groupby(level=0).sum()
+base_moving = wmean(bt.top1_acc_moving, n_moving.reindex(bt.trip_id).to_numpy())
+
+vcl = vr[(vr.split == "student_test") & (vr.emission == "classifier")]
+def latest(v):
+    return v.sort_values("run_at").drop_duplicates("trip_id", keep="last")
+vc = latest(vcl[vcl.backward_tol_m == 10.0])     # classifier emissions, decoder at its pre-sweep defaults
+vtuned = latest(vcl[vcl.backward_tol_m == 30.0])  # classifier emissions, tuned decoder (models/hmm_config.json)
 clf_hmm_cont = wmean(vc.continuity_viterbi, vc.n_ref_points)
 clf_hmm_moving = wmean(vc.acc_viterbi_moving, vc.n_moving_points)
 clf_only_moving = wmean(vc.acc_top1_moving, vc.n_moving_points)
-clf_only_top1 = wmean(vc.acc_top1, vc.n_ref_points)
+tuned_moving = wmean(vtuned.acc_viterbi_moving, vtuned.n_moving_points)
+tuned_cont = wmean(vtuned.continuity_viterbi, vtuned.n_ref_points)
 
 sw = pd.read_csv(R / "decoder_sweep_student_test.csv").sort_values("acc_viterbi", ascending=False)
 sw_best = sw.iloc[0]
-sweep_effect = pd.concat([sw.groupby(k)[["acc_viterbi", "acc_viterbi_moving"]].mean().reset_index()
+sweep_effect = pd.concat([sw.groupby(k)[["acc_viterbi_moving"]].mean().reset_index()
                           .rename(columns={k: "Value"}).assign(Parameter=k)
                           for k in ["beta_m", "emission_weight", "backward_tol_m"]])[
-    ["Parameter", "Value", "acc_viterbi", "acc_viterbi_moving"]].rename(
-    columns={"acc_viterbi": "Mean top-1 (all points)", "acc_viterbi_moving": "Mean top-1 (moving points)"})
+    ["Parameter", "Value", "acc_viterbi_moving"]].rename(columns={"acc_viterbi_moving": "Mean top-1"})
 
 # ---- features: meaning + mean value on true vs wrong candidates (student_test) ----
 FEATURE_INFO = {
@@ -150,13 +160,13 @@ Full record: <code>results/optuna_study.db</code>, <code>results/optuna_trials_{
 {img("plots/optuna_history.png", "Optuna search history: CV macro F1 per trial and best so far")}"""
 
 prog_df = pd.DataFrame([
-    {"Method": "Nearest arc (no ML)", "Top-1 (all points)": base_top1, "Top-1 (moving points)": np.nan, "Route continuity": base_cont},
-    {"Method": "HMM, distance-only emissions", "Top-1 (all points)": hmm_top1, "Top-1 (moving points)": np.nan, "Route continuity": hmm_cont},
-    {"Method": "Tuned MLP alone (classifier-only)", "Top-1 (all points)": clf_only_top1, "Top-1 (moving points)": clf_only_moving, "Route continuity": np.nan},
-    {"Method": "Tuned MLP + HMM, default decoder", "Top-1 (all points)": clf_hmm_top1, "Top-1 (moving points)": clf_hmm_moving, "Route continuity": clf_hmm_cont},
+    {"Method": "Nearest arc (no ML)", "Top-1": base_moving, "Route continuity": base_cont},
+    {"Method": "HMM, distance-only emissions", "Top-1": hmm_moving, "Route continuity": hmm_cont},
+    {"Method": "Tuned MLP alone (classifier-only)", "Top-1": clf_only_moving, "Route continuity": np.nan},
+    {"Method": "Tuned MLP + HMM, default decoder", "Top-1": clf_hmm_moving, "Route continuity": clf_hmm_cont},
     {"Method": f"Tuned MLP + HMM, tuned decoder (β={sw_best.beta_m:g}, weight={sw_best.emission_weight:g}, backward tol={sw_best.backward_tol_m:g} m)",
-     "Top-1 (all points)": sw_best.acc_viterbi, "Top-1 (moving points)": sw_best.acc_viterbi_moving, "Route continuity": sw_best.continuity_viterbi},
-    {"Method": "Reference route (ceiling)", "Top-1 (all points)": 1.0, "Top-1 (moving points)": 1.0, "Route continuity": ref_cont},
+     "Top-1": tuned_moving, "Route continuity": tuned_cont},
+    {"Method": "Reference route (ceiling)", "Top-1": 1.0, "Route continuity": ref_cont},
 ])
 pct_or_na = lambda v: "n/a" if pd.isna(v) else pct(v)
 
@@ -193,13 +203,14 @@ a {{ color:var(--accent); }} ul {{ padding-left:20px; }}
 </style></head><body><main>
 <h1>PathSnap: progress summary</h1>
 <p class="sub">Generated {datetime.now():%Y-%m-%d %H:%M} by <code>src/make_summary.py</code> from the result files in <code>results/</code>.
-All evaluation figures use the student_test partition (10 trips), point-weighted, unless marked CV (5-fold GroupKFold on the 80 train trips).</p>
+All evaluation figures use the student_test partition (10 trips), point-weighted, unless marked CV (5-fold GroupKFold on the 80 train trips).
+Route-reconstruction accuracy (top tiles, section 6) excludes parked points: GPS fixes that moved less than 20 m in 30 s sit off-road, so their reference arc is ambiguous.</p>
 
 <div class="kpis">
- <div class="kpi"><b>{pct(base_top1)}</b>Nearest-arc baseline, top-1</div>
- <div class="kpi"><b>{pct(best.Top1_Accuracy)}</b>Best classifier ({html.escape(best.Model)}), top-1</div>
- <div class="kpi"><b>{pct(sw_best.acc_viterbi)}</b>MLP + tuned HMM, top-1 (all points)</div>
- <div class="kpi"><b>{pct(sw_best.acc_viterbi_moving)}</b>MLP + tuned HMM, top-1 (moving points)</div>
+ <div class="kpi"><b>{pct(base_moving)}</b>Nearest-arc baseline</div>
+ <div class="kpi"><b>{pct(clf_only_moving)}</b>Tuned MLP alone</div>
+ <div class="kpi"><b>{pct(tuned_moving)}</b>Tuned MLP + tuned HMM</div>
+ <div class="kpi"><b>{pct(tuned_cont)}</b>Route continuity (reference {pct(ref_cont)})</div>
 </div>
 
 <h2>1. Dataset</h2>
@@ -236,13 +247,13 @@ Inference time is for all 209,581 student_test candidate rows.</p>
 {tuning_html}
 
 <h2>6. Route reconstruction (HMM / Viterbi)</h2>
-<div class="scroll">{table(prog_df, {"Top-1 (all points)": pct_or_na, "Top-1 (moving points)": pct_or_na, "Route continuity": pct_or_na})}</div>
+<div class="scroll">{table(prog_df, {"Top-1": pct_or_na, "Route continuity": pct_or_na})}</div>
 <p class="note">Moving points exclude parked points (moved &lt; 20 m in 30 s): a parked car sits off-road, so its reference arc is ambiguous.
 Map: <a href="maps/train_00000001.html">train 00000001, predicted vs reference route</a>.</p>
 <h3>Decoder parameter sweep ({len(sw)} settings, classifier emissions, student_test)</h3>
 <p>Mean accuracy for each parameter value, averaged over the other parameters. Backward tolerance (how far GPS may jitter
 backwards on one arc and still count as standing still) is the largest lever; it plateaus at 30 m.</p>
-<div class="scroll">{table(sweep_effect, {"Value": lambda v: f"{v:g}", "Mean top-1 (all points)": pct, "Mean top-1 (moving points)": pct})}</div>
+<div class="scroll">{table(sweep_effect, {"Value": lambda v: f"{v:g}", "Mean top-1": pct})}</div>
 <p class="note">Decoder settings were chosen on student_test, which the guidelines permit; the selected settings are still to be checked on train trips.
 Full grid: <code>results/decoder_sweep_student_test.csv</code>.</p>
 

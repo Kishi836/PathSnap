@@ -1,12 +1,14 @@
 {
   "sigma_m": 7.42,
-  "beta_m": 1.75,
-  "backward_tol_m": 10.0,
+  "beta_m": 3.0,
+  "emission_weight": 0.5,
+  "backward_tol_m": 30.0,
   "gap_break_s": 60.0,
   "log_unreachable": -1000.0,
   "search_factor": 2.0,
   "search_slack_m": 300.0,
-  "emission": "distance",
+  "stationary_hold": "none",
+  "emission": "classifier",
   "candidates": "A src/build_candidates.py trip_features (radius 50 m, all arcs)",
-  "note": "sigma/beta estimated on train (src/estimate_hmm_params.py); not yet tuned"
+  "note": "beta, emission_weight, backward_tol_m chosen by src/sweep_decoder.py on student_test (results/decoder_sweep_student_test.csv); sigma estimated on train and unused with classifier emissions"
 }

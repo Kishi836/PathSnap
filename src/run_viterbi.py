@@ -115,6 +115,8 @@ def main():
     ap.add_argument("--save-config", action="store_true", help="write models/hmm_config.json")
     ap.add_argument("--emission", default="distance", choices=("distance", "classifier"),
                     help="classifier = log P from models/classifier.joblib (B's model)")
+    ap.add_argument("--emission-weight", type=float)
+    ap.add_argument("--backward-tol", type=float)
     a = ap.parse_args()
 
     model = cfg = None
@@ -129,6 +131,10 @@ def main():
         params.sigma_m = a.sigma
     if a.beta:
         params.beta_m = a.beta
+    if a.emission_weight:
+        params.emission_weight = a.emission_weight
+    if a.backward_tol:
+        params.backward_tol_m = a.backward_tol
     trips = list_trips(a.split) if a.trips == ["all"] else a.trips
     cands, labels = load_candidates(a.split), load_obs_labels(a.split)
 

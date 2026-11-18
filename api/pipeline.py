@@ -89,7 +89,8 @@ def run(res: Resources, trip_id: str) -> Prediction:
         try:
             if len(feats):
                 prob = res.classifier.positive_proba(feats)            # role B
-                emission = viterbi.classifier_emission_logp(prob)      # role C's log transform
+                emission = (res.hmm_params.emission_weight              # tuned weight vs transitions
+                            * viterbi.classifier_emission_logp(prob))  # role C's log transform
             else:
                 emission = np.zeros(0)
         except Exception as exc:
