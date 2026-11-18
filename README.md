@@ -24,8 +24,10 @@ Noisy GPS tracks are matched to the road network: for every GPS point we predict
 | `src/plot_loss_curves.py` | Epoch-wise training curves (MLP, HistGradientBoosting) |
 | `src/network.py`, `src/viterbi.py`, `src/run_viterbi.py` | Road graph, HMM / Viterbi decoder, decoder evaluation |
 | `src/make_summary.py` | Builds `results/summary.html` from the result files |
-| `api/main.py` | FastAPI backend (laptop 1) |
-| `ui/index.html` | Evaluator UI (laptop 2), opens in any browser |
+| `api/` | FastAPI backend (laptop 1): config, startup resources, pipeline, server-side scoring, logging |
+| `ui/` | Evaluator UI (laptop 2): React + TypeScript + Leaflet, built with Vite |
+| `tests/` | API tests (`python -m pytest tests -q`) |
+| `docs/ROLE_D_API_UI.md` | API, UI and two-laptop deployment guide |
 | `models/` | Decoder configuration |
 | `results/eda/` | EDA plots, Folium maps, per-trip inventory, summary |
 | `results/` | Candidate tables, labels, experiment results |
@@ -66,15 +68,31 @@ python src/make_summary.py       # progress page -> results/summary.html
 
 ## Deployment (two laptops)
 
+Full guide, endpoints and troubleshooting: [docs/ROLE_D_API_UI.md](docs/ROLE_D_API_UI.md).
+
 Laptop 1 (API), from the repository root:
 
 ```bash
-uvicorn api.main:app --host 0.0.0.0 --port 8000
+python -m api
 ```
 
-Optional settings: `PATHSNAP_DATA_ROOT` (folder holding the trip partitions) and `PATHSNAP_SPLIT` (partition shown in the UI, default `student_test`). Allow port 8000 through the firewall.
+It prints the LAN address for laptop 2. Settings: `PATHSNAP_DATA_ROOT` (folder holding the trip
+partitions), `PATHSNAP_SPLIT` (partition shown in the UI, default `student_test`) and
+`PATHSNAP_EMISSION` (`auto`, `classifier`, `distance`). Allow port 8000 through the firewall.
+`uvicorn api.main:app --host 0.0.0.0 --port 8000` also works.
 
-Laptop 2 (UI): open `ui/index.html` in a browser, enter `http://<laptop-1-IP>:8000`, click **Connect**, pick a trip, click **Run prediction**. The API prints one log line per request. The reference route is used only inside the API to compute accuracy and is never sent to the UI.
+Laptop 2 (UI, Node.js 20+):
+
+```bash
+cd ui
+npm ci
+echo VITE_API_BASE_URL=http://<laptop-1-IP>:8000 > .env.local
+npm run dev
+```
+
+Open http://localhost:5173, pick a trip, click **Match route**. The API prints one log line per
+request. The reference route is read only after prediction, to compute accuracy, and is never sent
+to the UI.
 
 ## Outputs used by the rest of the pipeline
 
