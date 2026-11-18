@@ -217,7 +217,8 @@ def _require_trip(res: Resources, trip_id: str):
 
 def _summary(metrics: dict, stats: dict, infer_ms: float) -> str:
     if metrics.get("scored"):
-        acc = f"acc {logs.pct(metrics['top1_accuracy'])} ({metrics['correct_points']}/{metrics['scored_points']})"
+        acc = (f"acc {logs.pct(metrics['top1_accuracy_moving'])} "
+               f"({metrics['correct_points_moving']}/{metrics['scored_points_moving']} moving, parked excluded)")
     else:
         acc = "acc n/a (no reference)"
     return (f"{acc}  continuity {logs.pct(metrics.get('route_continuity'))}  points {metrics['n_points']}  "

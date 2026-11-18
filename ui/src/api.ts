@@ -40,6 +40,9 @@ export interface Metrics {
   top1_accuracy: number | null;
   correct_points: number | null;
   scored_points: number | null;
+  top1_accuracy_moving: number | null;
+  correct_points_moving: number | null;
+  scored_points_moving: number | null;
   route_overlap: number | null;
   route_continuity: number | null;
   n_points: number;

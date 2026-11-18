@@ -65,6 +65,9 @@ class Metrics(BaseModel):
     top1_accuracy: Optional[float] = Field(None, description="share of GPS points on the correct arc")
     correct_points: Optional[int] = None
     scored_points: Optional[int] = None
+    top1_accuracy_moving: Optional[float] = Field(None, description="same, excluding parked points (headline metric)")
+    correct_points_moving: Optional[int] = None
+    scored_points_moving: Optional[int] = None
     route_overlap: Optional[float] = Field(None, description="Jaccard overlap of predicted vs reference arc sets")
     route_continuity: Optional[float] = Field(None, description="share of consecutive predictions that connect")
     n_points: int

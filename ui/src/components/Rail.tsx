@@ -219,10 +219,10 @@ export function Result({ p, roundTripMs }: { p: Prediction; roundTripMs: number 
     <section aria-label={`Result for trip ${p.trip_id}`} aria-live="polite" className="px-5 py-5">
       {m.scored ? (
         <>
-          <p className="text-[13px] text-muted">GPS fixes matched to the correct road</p>
-          <p className="figure-xl mt-1.5 text-[64px] text-route">{pct(m.top1_accuracy)}</p>
+          <p className="text-[13px] text-muted">GPS fixes matched to the correct road (parked points excluded)</p>
+          <p className="figure-xl mt-1.5 text-[64px] text-route">{pct(m.top1_accuracy_moving)}</p>
           <p className="mt-2 text-[14px] text-chart">
-            {int(m.correct_points)} of {int(m.scored_points)} fixes on the reference arc
+            {int(m.correct_points_moving)} of {int(m.scored_points_moving)} moving fixes on the reference arc
           </p>
         </>
       ) : (

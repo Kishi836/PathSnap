@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from src.build_candidates import route_labels
+from src.data import stationary_mask
 from src.run_viterbi import jaccard
 
 from .pipeline import Prediction
@@ -36,12 +37,19 @@ def score(res: Resources, pred: Prediction) -> dict:
         raise ValueError("reference route references unknown arcs")
     pos, _ = route_labels(pred.xy, pred.a, pred.b, route)
     ref = route[pos]
-    correct = int(np.sum(pred.pred_arcs == ref))
+    hit = pred.pred_arcs == ref
+    correct = int(np.sum(hit))
     total = int(len(ref))
+    # parked points (GPS-only rule: < 20 m moved in 30 s) sit off-road with ambiguous reference arcs;
+    # the headline accuracy excludes them, the all-points figure is reported alongside
+    moving = ~stationary_mask(pred.xy, pred.track.t.to_numpy())
     return {
         "scored": True,
         "top1_accuracy": correct / total if total else None,
         "correct_points": correct,
         "scored_points": total,
+        "top1_accuracy_moving": float(hit[moving].mean()) if moving.any() else None,
+        "correct_points_moving": int(hit[moving].sum()),
+        "scored_points_moving": int(moving.sum()),
         "route_overlap": float(jaccard(pred.pred_arcs, route)),   # Jaccard of arc sets (C's arc_jaccard)
     }
