@@ -1,6 +1,5 @@
 
 from pathlib import Path
-import argparse
 import time
 
 import numpy as np
@@ -27,6 +26,9 @@ from sklearn.metrics import (
     log_loss
 )
 
+from baseline_nearest import route_continuity
+from data import load_trip
+
 
 # ==================================================
 # 1. PROJECT CONFIGURATION
@@ -47,6 +49,10 @@ COMPARISON_PATH = RESULTS_DIR / "model_comparison.csv"
 
 RANDOM_SEED = 42
 N_SPLITS = 5
+
+# Consecutive 1 Hz GPS points are near-duplicates, so fitting on every 5th point loses little
+# information and cuts training rows ~5x (KNN / Random Forest are otherwise impractical).
+TRAIN_POINT_STRIDE = 5
 
 
 # ==================================================
@@ -180,57 +186,20 @@ def prepare_data(df, feature_columns):
 
 
 # ==================================================
-# 5. GENERATE FAKE DATA
+# 5. TRAINING SUBSET
 # ==================================================
 
-def create_fake_data(number_of_trips=10):
+def training_subset(train):
+    """Rows used for fitting: every TRAIN_POINT_STRIDE-th GPS point, and only points whose
+    reference arc is among the candidates (a point with no positive row teaches nothing
+    about which candidate is right). All candidates of a kept point stay together."""
 
-    rng = np.random.default_rng(RANDOM_SEED)
+    has_positive = (
+        train.groupby(["trip_id", "obs_idx"])["label"].transform("max") == 1
+    )
+    keep = has_positive & (train["obs_idx"] % TRAIN_POINT_STRIDE == 0)
 
-    rows = []
-    reference_rows = []
-
-    for trip in range(number_of_trips):
-
-        trip_id = f"{trip:08d}"
-
-        for obs_idx in range(5):
-
-            correct_arc = obs_idx + trip * 10
-
-            reference_rows.append({
-                "trip_id": trip_id,
-                "obs_idx": obs_idx,
-                "ref_arc_id": correct_arc
-            })
-
-            for candidate in range(3):
-
-                label = int(candidate == 0)
-
-                rows.append({
-                    "trip_id": trip_id,
-                    "obs_idx": obs_idx,
-                    "arc_id": correct_arc + candidate * 100,
-                    "label": label,
-
-                    "f_distance": (
-                        rng.uniform(0, 3)
-                        if label else rng.uniform(5, 20)
-                    ),
-
-                    "f_heading_diff": (
-                        rng.uniform(0, 15)
-                        if label else rng.uniform(30, 180)
-                    ),
-
-                    "f_speed": rng.uniform(10, 60)
-                })
-
-    candidates = pd.DataFrame(rows)
-    references = pd.DataFrame(reference_rows)
-
-    return candidates, references
+    return train[keep].reset_index(drop=True)
 
 
 # ==================================================
@@ -291,7 +260,8 @@ def create_models():
             ("scaler", StandardScaler()),
             ("classifier", KNeighborsClassifier(
                 n_neighbors=5,
-                weights="distance"
+                weights="distance",
+                n_jobs=-1
             ))
         ]),
 
@@ -299,7 +269,7 @@ def create_models():
             ("scaler", StandardScaler()),
             ("classifier", RandomForestClassifier(
                 n_estimators=100,
-                max_depth=None,
+                max_depth=20,
                 min_samples_split=2,
                 class_weight="balanced",
                 random_state=RANDOM_SEED,
@@ -388,11 +358,13 @@ def calculate_top1(candidates, probabilities, references):
         indicator=True
     )
 
-    # A reference arc missing from the candidate list
-    # is counted as an incorrect prediction.
-    candidate_misses = (
-        merged["_merge"] == "right_only"
+    # Candidate miss: the reference arc is not among the point's candidates
+    # (including points with no candidates at all). Counted as incorrect.
+    has_positive = (
+        candidates.groupby(["trip_id", "obs_idx"])["label"].max().rename("has_positive")
     )
+    merged = merged.merge(has_positive, on=["trip_id", "obs_idx"], how="left")
+    candidate_misses = merged["has_positive"].fillna(0) != 1
 
     correct = (
         (merged["_merge"] == "both")
@@ -405,7 +377,7 @@ def calculate_top1(candidates, probabilities, references):
     total = len(merged)
 
     if total == 0:
-        return np.nan, np.nan, 0, 0
+        return np.nan, np.nan, 0, 0, best_candidates
 
     accuracy = correct.sum() / total
 
@@ -416,8 +388,22 @@ def calculate_top1(candidates, probabilities, references):
         accuracy,
         miss_rate,
         int(correct.sum()),
-        int(miss_count)
+        int(miss_count),
+        best_candidates
     )
+
+
+def mean_route_continuity(best_candidates, partition="student_test"):
+    """Point-weighted route continuity of the top-1 predictions over all trips."""
+
+    values, weights = [], []
+
+    for trip_id, group in best_candidates.groupby("trip_id"):
+        arcs = load_trip(partition, trip_id)["arcs"].to_numpy(dtype=np.int64)
+        values.append(route_continuity(group.sort_values("obs_idx")["arc_id"].to_numpy(np.int64), arcs))
+        weights.append(len(group))
+
+    return float(np.average(values, weights=weights))
 
 
 # ==================================================
@@ -541,13 +527,14 @@ def evaluate_models(
         )
 
         # Observation-level Top-1
-        top1, miss_rate, correct_count, miss_count = (
+        top1, miss_rate, correct_count, miss_count, best = (
             calculate_top1(
                 test_candidates,
                 probabilities,
                 test_references
             )
         )
+        continuity = mean_route_continuity(best)
 
         result = {
             "Model": name,
@@ -563,7 +550,7 @@ def evaluate_models(
             "Candidate_Miss_Count": miss_count,
             "Training_Time_Seconds": training_time,
             "Inference_Time_Seconds": inference_time,
-            "Route_Continuity": np.nan
+            "Route_Continuity": continuity
         }
 
         results.append(result)
@@ -575,6 +562,7 @@ def evaluate_models(
         print(f"Log Loss: {loss:.4f}")
         print(f"Top-1 Accuracy: {top1:.4f}")
         print(f"Candidate Miss Rate: {miss_rate:.4f}")
+        print(f"Route Continuity: {continuity:.4f}")
         print(f"Training time: {training_time:.4f}s")
         print(f"Inference time: {inference_time:.4f}s")
 
@@ -679,28 +667,9 @@ def generate_plots(results_df):
 
 def main():
 
-    parser = argparse.ArgumentParser()
+    print("Loading actual candidate datasets.")
 
-    parser.add_argument(
-        "--demo",
-        action="store_true",
-        help="Run evaluation with artificial data."
-    )
-
-    args = parser.parse_args()
-
-    if args.demo:
-
-        print("Running demonstration evaluation.")
-
-        train, train_labels = create_fake_data(10)
-        test, test_labels = create_fake_data(5)
-
-    else:
-
-        print("Loading actual candidate datasets.")
-
-        train, test, train_labels, test_labels = load_data()
+    train, test, train_labels, test_labels = load_data()
 
     # Validate
     train_features = validate_data(
@@ -724,7 +693,9 @@ def main():
         test_labels, "Student test reference labels"
     )
 
-    # Prepare training and test data
+    # Prepare training and test data (fit on the subset; evaluate on all student-test rows)
+    train = training_subset(train)
+
     X_train, y_train, groups = prepare_data(
         train, train_features
     )

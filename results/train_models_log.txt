@@ -1,0 +1,99 @@
+Loading actual candidate datasets.
+
+DATASET SUMMARY
+--------------------------------------------------
+Training rows: 365536
+Student-test rows: 209581
+Features: ['f_dist', 'f_dist_rank', 'f_dist_minus_min', 'f_n_cands', 'f_heading_cos', 'f_heading_valid', 'f_dist_prev', 'f_dist_next', 'f_proj_t', 'f_arc_len', 'f_arc_two_way', 'f_end_out_degree', 'f_speed', 'f_gap_before_s', 'f_stationary']
+Training trips: 80
+Student-test trips: 10
+
+GROUP K-FOLD VALIDATION
+--------------------------------------------------
+Fold 1: Train rows = 292262, Validation rows = 73274, Train trips = 64, Validation trips = 16
+Fold 2: Train rows = 292217, Validation rows = 73319, Train trips = 64, Validation trips = 16
+Fold 3: Train rows = 292394, Validation rows = 73142, Train trips = 64, Validation trips = 16
+Fold 4: Train rows = 292410, Validation rows = 73126, Train trips = 64, Validation trips = 16
+Fold 5: Train rows = 292861, Validation rows = 72675, Train trips = 64, Validation trips = 16
+
+No trip leakage detected.
+
+MODEL EVALUATION
+=================================================================
+
+Evaluating: Logistic Regression
+CV Macro F1: 0.8217 ± 0.0192
+Test Macro F1: 0.8149
+Precision: 0.5246
+Recall: 0.9562
+Log Loss: 0.1903
+Top-1 Accuracy: 0.8596
+Candidate Miss Rate: 0.0014
+Route Continuity: 0.9305
+Training time: 0.4993s
+Inference time: 0.0480s
+
+Evaluating: KNN
+CV Macro F1: 0.9022 ± 0.0318
+Test Macro F1: 0.9075
+Precision: 0.8461
+Recall: 0.8174
+Log Loss: 0.3821
+Top-1 Accuracy: 0.8418
+Candidate Miss Rate: 0.0014
+Route Continuity: 0.9161
+Training time: 0.8833s
+Inference time: 278.1437s
+
+Evaluating: Random Forest
+CV Macro F1: 0.9227 ± 0.0297
+Test Macro F1: 0.9238
+Precision: 0.8349
+Recall: 0.8910
+Log Loss: 0.0679
+Top-1 Accuracy: 0.8661
+Candidate Miss Rate: 0.0014
+Route Continuity: 0.9258
+Training time: 11.9620s
+Inference time: 0.6114s
+
+Evaluating: HistGradientBoosting
+CV Macro F1: 0.9033 ± 0.0280
+Test Macro F1: 0.8984
+Precision: 0.7169
+Recall: 0.9536
+Log Loss: 0.0988
+Top-1 Accuracy: 0.8748
+Candidate Miss Rate: 0.0014
+Route Continuity: 0.9316
+Training time: 2.8439s
+Inference time: 1.0187s
+
+Evaluating: MLP
+CV Macro F1: 0.9177 ± 0.0301
+Test Macro F1: 0.9244
+Precision: 0.9064
+Recall: 0.8217
+Log Loss: 0.0631
+Top-1 Accuracy: 0.8748
+Candidate Miss Rate: 0.0014
+Route Continuity: 0.9380
+Training time: 23.7965s
+Inference time: 0.1918s
+
+Comparison saved to:
+C:\Users\Admin\OneDrive\PES UNIVERSITY CSE\5th Semester\Machine Learning\Hackathon\results\model_comparison.csv
+
+Plots saved in:
+C:\Users\Admin\OneDrive\PES UNIVERSITY CSE\5th Semester\Machine Learning\Hackathon\results\plots
+
+FINAL MODEL COMPARISON
+=================================================================
+               Model  CV_Macro_F1_Mean  Student_Test_Macro_F1  Top1_Accuracy  Log_Loss
+ Logistic Regression          0.821718               0.814880       0.859603  0.190267
+                 KNN          0.902172               0.907453       0.841806  0.382131
+       Random Forest          0.922687               0.923841       0.866127  0.067940
+HistGradientBoosting          0.903331               0.898423       0.874791  0.098832
+                 MLP          0.917652               0.924405       0.874791  0.063135
+
+Phase 3 evaluation completed!

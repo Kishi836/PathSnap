@@ -18,7 +18,7 @@ from train_models import (
     RANDOM_SEED,
     N_SPLITS,
     create_models,
-    create_fake_data
+    training_subset
 )
 
 
@@ -206,22 +206,15 @@ def objective(trial, model_name, X, y, groups):
 # 4. LOAD TRAINING DATA
 # ==================================================
 
-def load_training_data(demo=False):
+def load_training_data():
 
-    if demo:
+    if not TRAIN_PATH.exists():
+        raise FileNotFoundError(
+            f"Training data not found: {TRAIN_PATH}"
+        )
 
-        print("Using artificial demonstration data.")
-
-        train, _ = create_fake_data(10)
-
-    else:
-
-        if not TRAIN_PATH.exists():
-            raise FileNotFoundError(
-                f"Training data not found: {TRAIN_PATH}"
-            )
-
-        train = pd.read_parquet(TRAIN_PATH)
+    # same fitting subset as train_models.py, so tuned and untuned runs are comparable
+    train = training_subset(pd.read_parquet(TRAIN_PATH))
 
     feature_columns = [
         col for col in train.columns
@@ -394,20 +387,12 @@ def main():
         help="Number of Optuna trials."
     )
 
-    parser.add_argument(
-        "--demo",
-        action="store_true",
-        help="Use artificial demonstration data."
-    )
-
     args = parser.parse_args()
 
     if args.trials < 1:
         parser.error("--trials must be at least 1.")
 
-    X, y, groups, feature_columns = load_training_data(
-        demo=args.demo
-    )
+    X, y, groups, feature_columns = load_training_data()
 
     print("\nTRAINING DATA SUMMARY")
     print("-" * 50)
