@@ -23,11 +23,10 @@ import pandas as pd
 
 from .maps import trip_map
 from .network import ROOT, RoadGraph, list_trips, load_obs_labels, load_trip, route_continuity
-from .viterbi import HMMParams, decode, top1
+from .viterbi import HMMParams, classifier_emission_logp, decode, top1
 
 RESULTS = ROOT / "results"
 ALLOWED_SPLITS = ("train", "student_test")
-CAND_COLS = ["trip_id", "obs_idx", "arc_id", "label", "f_dist"]
 
 
 def default_params() -> HMMParams:
@@ -44,7 +43,7 @@ def load_candidates(split: str):
     path = RESULTS / f"candidates_{split}.parquet"
     if not path.exists():
         raise FileNotFoundError(f"{path} missing - run `python src/build_candidates.py` (role A) first")
-    df = pd.read_parquet(path, columns=CAND_COLS)
+    df = pd.read_parquet(path)   # all columns: the classifier emission needs the f_* features
     return {tid: g.reset_index(drop=True) for tid, g in df.groupby("trip_id")}
 
 
@@ -53,25 +52,28 @@ def jaccard(a, b):
     return len(a & b) / max(1, len(a | b))
 
 
-def run_trip(trip_id, split, params, cands, labels, make_map=True):
+def run_trip(trip_id, split, params, cands, labels, make_map=True, prob=None):
+    """prob: classifier P(candidate is the true arc) per row of cands; None = distance-only emissions."""
     trip = load_trip(trip_id, split)
     graph = RoadGraph(trip)
     T = len(trip.track)
     ref = labels["ref_arc_id"].reindex(range(T)).fillna(-1).to_numpy(np.int64)
     has_ref = ref >= 0
+    moving = has_ref & ~labels["stationary"].reindex(range(T)).fillna(False).to_numpy(bool)
     # points whose reference arc is among the candidates (B trains/evaluates on these)
     hit = np.zeros(T, bool)
     hit[cands.loc[cands.label == 1, "obs_idx"].to_numpy()] = True
 
+    emission = None if prob is None else params.emission_weight * classifier_emission_logp(prob)
     t0 = time.perf_counter()
-    pred, info = decode(cands, None, graph, params, return_info=True)
+    pred, info = decode(cands, emission, graph, params, return_info=True)
     t_dec = time.perf_counter() - t0
-    # baseline "classifier-only" stand-in until B's model exists: nearest candidate arc
-    base = top1(cands, -cands["f_dist"].to_numpy(), T)
+    # "classifier-only": per-point top-1 of the same scores the HMM uses (nearest arc for distance-only)
+    base = top1(cands, -cands["f_dist"].to_numpy() if prob is None else prob, T)
 
     row = {
         "run_at": datetime.now().isoformat(timespec="seconds"), "split": split, "trip_id": trip_id,
-        "emission": "distance", "candidates_from": "A", "labels_from": "A",
+        "emission": "distance" if prob is None else "classifier", "candidates_from": "A", "labels_from": "A",
         **{k: v for k, v in vars(params).items()},
         "n_points": T, "n_ref_points": int(has_ref.sum()),
         "candidate_miss_rate": float(1 - hit[has_ref].mean()),
@@ -80,6 +82,9 @@ def run_trip(trip_id, split, params, cands, labels, make_map=True):
         "acc_viterbi": float(np.mean(pred[has_ref] == ref[has_ref])),
         "acc_top1_on_hits": float(np.mean(base[hit] == ref[hit])),
         "acc_viterbi_on_hits": float(np.mean(pred[hit] == ref[hit])),
+        "n_moving_points": int(moving.sum()),
+        "acc_top1_moving": float(np.mean(base[moving] == ref[moving])) if moving.any() else np.nan,
+        "acc_viterbi_moving": float(np.mean(pred[moving] == ref[moving])) if moving.any() else np.nan,
         "continuity_top1": route_continuity(base, graph),
         "continuity_viterbi": route_continuity(pred, graph),
         "continuity_reference": route_continuity(ref[has_ref], graph),
@@ -108,7 +113,16 @@ def main():
     ap.add_argument("--beta", type=float)
     ap.add_argument("--no-map", action="store_true")
     ap.add_argument("--save-config", action="store_true", help="write models/hmm_config.json")
+    ap.add_argument("--emission", default="distance", choices=("distance", "classifier"),
+                    help="classifier = log P from models/classifier.joblib (B's model)")
     a = ap.parse_args()
+
+    model = cfg = None
+    if a.emission == "classifier":
+        import json
+        import joblib
+        model = joblib.load(ROOT / "models" / "classifier.joblib")
+        cfg = json.loads((ROOT / "models" / "classifier_config.json").read_text())
 
     params = default_params()
     if a.sigma:
@@ -120,20 +134,28 @@ def main():
 
     rows = []
     for tid in trips:
-        r = run_trip(tid, a.split, params, cands[tid], labels[tid], make_map=not a.no_map)
+        prob = None if model is None else model.predict_proba(cands[tid][cfg["feature_columns"]])[:, 1]
+        r = run_trip(tid, a.split, params, cands[tid], labels[tid], make_map=not a.no_map, prob=prob)
         rows.append(r)
-        print(f"{a.split} {tid}: top1 {r['acc_top1']:.3f} -> viterbi {r['acc_viterbi']:.3f} | "
+        print(f"{a.split} {tid}: top1 {r['acc_top1']:.3f} -> viterbi {r['acc_viterbi']:.3f} "
+              f"(moving {r['acc_top1_moving']:.3f} -> {r['acc_viterbi_moving']:.3f}) | "
               f"continuity {r['continuity_top1']:.3f} -> {r['continuity_viterbi']:.3f} "
               f"(ref {r['continuity_reference']:.3f}) | miss {r['candidate_miss_rate']:.3f} | "
               f"{r['decode_seconds']:.1f}s")
     df = pd.DataFrame(rows)
     log = RESULTS / "viterbi_runs.csv"
-    df.to_csv(log, mode="a", header=not log.exists(), index=False)
+    # rewrite instead of appending, so rows with new columns never land under an old header
+    if log.exists():
+        df = pd.concat([pd.read_csv(log, dtype={"trip_id": str}), df], ignore_index=True)
+    df.to_csv(log, index=False)
+    df = df.tail(len(rows))
     if len(df) > 1:
         w = df.n_ref_points / df.n_ref_points.sum()
         cols = ["candidate_miss_rate", "acc_top1", "acc_viterbi", "acc_viterbi_on_hits",
                 "continuity_top1", "continuity_viterbi"]
         print("point-weighted mean:", (df[cols].mul(w, axis=0).sum()).round(4).to_dict())
+        wm = df.n_moving_points / df.n_moving_points.sum()
+        print("moving points only:", (df[["acc_top1_moving", "acc_viterbi_moving"]].mul(wm, axis=0).sum()).round(4).to_dict())
     if a.save_config:
         params.to_json(ROOT / "models" / "hmm_config.json", emission="distance",
                        candidates="A src/build_candidates.py trip_features (radius 50 m, all arcs)",

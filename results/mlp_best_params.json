@@ -1,0 +1,30 @@
+{
+    "model": "MLP",
+    "best_cv_macro_f1": 0.9189108588475827,
+    "best_parameters": {
+        "hidden_layer_sizes": "32",
+        "activation": "relu",
+        "alpha": 6.468471274298881e-05,
+        "learning_rate_init": 0.008624887001182918,
+        "batch_size": 512
+    },
+    "feature_columns": [
+        "f_dist",
+        "f_dist_rank",
+        "f_dist_minus_min",
+        "f_n_cands",
+        "f_heading_cos",
+        "f_heading_valid",
+        "f_dist_prev",
+        "f_dist_next",
+        "f_proj_t",
+        "f_arc_len",
+        "f_arc_two_way",
+        "f_end_out_degree",
+        "f_speed",
+        "f_gap_before_s",
+        "f_stationary"
+    ],
+    "random_seed": 42,
+    "n_splits": 5
+}

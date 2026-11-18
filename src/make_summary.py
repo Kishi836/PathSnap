@@ -75,17 +75,90 @@ model_df = model_df.rename(columns={"CV_Macro_F1_Mean": "CV macro F1", "CV_Macro
 best = mc.sort_values(["Top1_Accuracy", "Log_Loss"], ascending=[False, True]).iloc[0]
 
 vr = pd.read_csv(R / "viterbi_runs.csv", dtype={"trip_id": str})
-vt = vr[vr.split == "student_test"].sort_values("run_at").drop_duplicates("trip_id", keep="last")
+def latest_runs(emission):
+    v = vr[(vr.split == "student_test") & (vr.emission == emission)]
+    return v.sort_values("run_at").drop_duplicates("trip_id", keep="last")
+
+
+vt = latest_runs("distance")
 hmm_top1 = wmean(vt.acc_viterbi, vt.n_ref_points)
 hmm_cont = wmean(vt.continuity_viterbi, vt.n_ref_points)
 ref_cont = wmean(vt.continuity_reference, vt.n_ref_points)
+vc = latest_runs("classifier")   # classifier emissions, decoder at its pre-sweep defaults
+clf_hmm_top1 = wmean(vc.acc_viterbi, vc.n_ref_points)
+clf_hmm_cont = wmean(vc.continuity_viterbi, vc.n_ref_points)
+clf_hmm_moving = wmean(vc.acc_viterbi_moving, vc.n_moving_points)
+clf_only_moving = wmean(vc.acc_top1_moving, vc.n_moving_points)
+clf_only_top1 = wmean(vc.acc_top1, vc.n_ref_points)
+
+sw = pd.read_csv(R / "decoder_sweep_student_test.csv").sort_values("acc_viterbi", ascending=False)
+sw_best = sw.iloc[0]
+sweep_effect = pd.concat([sw.groupby(k)[["acc_viterbi", "acc_viterbi_moving"]].mean().reset_index()
+                          .rename(columns={k: "Value"}).assign(Parameter=k)
+                          for k in ["beta_m", "emission_weight", "backward_tol_m"]])[
+    ["Parameter", "Value", "acc_viterbi", "acc_viterbi_moving"]].rename(
+    columns={"acc_viterbi": "Mean top-1 (all points)", "acc_viterbi_moving": "Mean top-1 (moving points)"})
+
+# ---- features: meaning + mean value on true vs wrong candidates (student_test) ----
+FEATURE_INFO = {
+    "f_dist": ("Distance", "GPS point to arc distance (m)"),
+    "f_dist_rank": ("Distance", "Rank among the point's candidates (0 = nearest)"),
+    "f_dist_minus_min": ("Distance", "Extra distance compared with the nearest candidate (m)"),
+    "f_proj_t": ("Distance", "Where along the arc the point projects (0 = start, 1 = end)"),
+    "f_heading_cos": ("Direction", "Cosine between travel direction (point i-2 to i+2) and arc direction"),
+    "f_heading_valid": ("Direction", "1 if the car moved at least 5 m in that window"),
+    "f_dist_prev": ("Context", "Previous GPS point's distance to this arc (m)"),
+    "f_dist_next": ("Context", "Next GPS point's distance to this arc (m)"),
+    "f_arc_len": ("Road", "Arc length (m)"),
+    "f_arc_two_way": ("Road", "1 if the reverse arc exists (two-way road)"),
+    "f_end_out_degree": ("Road", "Roads leaving the arc's end node"),
+    "f_n_cands": ("Road", "Number of candidates around the point"),
+    "f_speed": ("Quality", "Speed since the previous point (m/s)"),
+    "f_gap_before_s": ("Quality", "Seconds since the previous point"),
+    "f_stationary": ("Quality", "1 if parked (moved < 20 m in 30 s)"),
+}
+ct = pd.read_parquet(R / "candidates_student_test.parquet")
+fcols = [col for col in ct.columns if col.startswith("f_")]
+means = ct.groupby("label")[fcols].mean()
+feat_df = pd.DataFrame([{"Feature": col, "Group": FEATURE_INFO.get(col, ("?", "?"))[0],
+                         "Meaning": FEATURE_INFO.get(col, ("?", "undocumented"))[1],
+                         "Mean, true arc": means.loc[1, col], "Mean, wrong arcs": means.loc[0, col]} for col in fcols])
+
+# ---- Bayesian optimisation (only once src/evaluate_tuned.py has run) ----
+tuning_html = "<p>Not run yet.</p>"
+if (R / "tuning_comparison.csv").exists():
+    import json
+    import optuna
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    cfg = json.loads((R.parent / "models/classifier_config.json").read_text())
+    study = optuna.load_study(study_name=f"pathsnap_{cfg['model'].lower().replace(' ', '_')}",
+                              storage=f"sqlite:///{(R / 'optuna_study.db').as_posix()}")
+    dists = study.best_trial.distributions
+    space = pd.DataFrame([{"Hyperparameter": k,
+                           "Search range": (", ".join(map(str, d.choices)) if hasattr(d, "choices")
+                                            else f"{d.low:g} to {d.high:g}" + (" (log scale)" if getattr(d, "log", False) else "")),
+                           "Best value": (f"{study.best_params[k]:.3g}" if isinstance(study.best_params[k], float)
+                                          else str(study.best_params[k]))} for k, d in dists.items()])
+    tc = pd.read_csv(R / "tuning_comparison.csv")
+    fmt_tc = {"CV_Macro_F1": f3, "Student_Test_Top1": pct, "Student_Test_Macro_F1": f3, "Log_Loss": f3,
+              "Route_Continuity": pct, "Training_Time_Seconds": lambda v: f"{v:.1f}", "Inference_Time_Seconds": lambda v: f"{v:.2f}"}
+    tuning_html = f"""<p>Optuna, TPE sampler (Bayesian), objective = mean 5-fold GroupKFold macro F1 on the 80 train trips,
+median pruning. <b>{cfg['n_trials_complete']}</b> trials completed, <b>{cfg['n_trials_pruned']}</b> pruned.
+Full record: <code>results/optuna_study.db</code>, <code>results/optuna_trials_{cfg['model'].lower()}.csv</code>.</p>
+<div class="scroll">{table(space, {})}</div>
+<div class="scroll">{table(tc, fmt_tc)}</div>
+{img("plots/optuna_history.png", "Optuna search history: CV macro F1 per trial and best so far")}"""
 
 prog_df = pd.DataFrame([
-    {"Method": "Nearest arc (no ML)", "Top-1": base_top1, "Route continuity": base_cont},
-    {"Method": f"Best classifier alone ({best.Model})", "Top-1": best.Top1_Accuracy, "Route continuity": best.Route_Continuity},
-    {"Method": "HMM / Viterbi, distance-only emissions", "Top-1": hmm_top1, "Route continuity": hmm_cont},
-    {"Method": "Reference route (ceiling)", "Top-1": 1.0, "Route continuity": ref_cont},
+    {"Method": "Nearest arc (no ML)", "Top-1 (all points)": base_top1, "Top-1 (moving points)": np.nan, "Route continuity": base_cont},
+    {"Method": "HMM, distance-only emissions", "Top-1 (all points)": hmm_top1, "Top-1 (moving points)": np.nan, "Route continuity": hmm_cont},
+    {"Method": "Tuned MLP alone (classifier-only)", "Top-1 (all points)": clf_only_top1, "Top-1 (moving points)": clf_only_moving, "Route continuity": np.nan},
+    {"Method": "Tuned MLP + HMM, default decoder", "Top-1 (all points)": clf_hmm_top1, "Top-1 (moving points)": clf_hmm_moving, "Route continuity": clf_hmm_cont},
+    {"Method": f"Tuned MLP + HMM, tuned decoder (β={sw_best.beta_m:g}, weight={sw_best.emission_weight:g}, backward tol={sw_best.backward_tol_m:g} m)",
+     "Top-1 (all points)": sw_best.acc_viterbi, "Top-1 (moving points)": sw_best.acc_viterbi_moving, "Route continuity": sw_best.continuity_viterbi},
+    {"Method": "Reference route (ceiling)", "Top-1 (all points)": 1.0, "Top-1 (moving points)": 1.0, "Route continuity": ref_cont},
 ])
+pct_or_na = lambda v: "n/a" if pd.isna(v) else pct(v)
 
 # ---- page ----
 fmt_data = {"Steps exactly 1 s apart": pct, "Parked points": pct}
@@ -125,8 +198,8 @@ All evaluation figures use the student_test partition (10 trips), point-weighted
 <div class="kpis">
  <div class="kpi"><b>{pct(base_top1)}</b>Nearest-arc baseline, top-1</div>
  <div class="kpi"><b>{pct(best.Top1_Accuracy)}</b>Best classifier ({html.escape(best.Model)}), top-1</div>
- <div class="kpi"><b>{pct(hmm_top1)}</b>HMM / Viterbi (distance-only), top-1</div>
- <div class="kpi"><b>{pct(hmm_cont)}</b>HMM route continuity (reference {pct(ref_cont)})</div>
+ <div class="kpi"><b>{pct(sw_best.acc_viterbi)}</b>MLP + tuned HMM, top-1 (all points)</div>
+ <div class="kpi"><b>{pct(sw_best.acc_viterbi_moving)}</b>MLP + tuned HMM, top-1 (moving points)</div>
 </div>
 
 <h2>1. Dataset</h2>
@@ -146,7 +219,11 @@ All evaluation figures use the student_test partition (10 trips), point-weighted
 </ul>
 {img("eda/plots/candidates_vs_radius.png", "Candidate set size vs route coverage by search radius (train)")}
 
-<h2>3. Model comparison (five models)</h2>
+<h2>3. Features (15 per point and candidate arc)</h2>
+<div class="scroll">{table(feat_df, {"Mean, true arc": lambda v: f"{v:.3f}", "Mean, wrong arcs": lambda v: f"{v:.3f}"})}</div>
+<p class="note">Means over all student_test candidate rows. None of the features read the reference route, so the API computes the same ones at inference time.</p>
+
+<h2>4. Model comparison (five models)</h2>
 <div class="scroll">{table(model_df, fmt_model)}</div>
 <p class="note">Fitted on every 5th GPS point of the 80 train trips (points whose reference arc is among the candidates); evaluated on all student_test rows.
 Inference time is for all 209,581 student_test candidate rows.</p>
@@ -155,14 +232,23 @@ Inference time is for all 209,581 student_test candidate rows.</p>
 {img("plots/log_loss.png", "Student_test log loss")}</div>
 {img("plots/loss_curves.png", "Training curves for the two iteratively trained models (MLP, HistGradientBoosting)")}
 
-<h2>4. Route reconstruction (HMM / Viterbi)</h2>
-<div class="scroll">{table(prog_df, {"Top-1": pct, "Route continuity": pct})}</div>
-<p class="note">HMM run: distance-only emissions, σ and β estimated on train only. Map: <a href="maps/train_00000001.html">train 00000001, predicted vs reference route</a>.</p>
+<h2>5. Bayesian hyperparameter optimisation</h2>
+{tuning_html}
 
-<h2>5. In progress</h2>
+<h2>6. Route reconstruction (HMM / Viterbi)</h2>
+<div class="scroll">{table(prog_df, {"Top-1 (all points)": pct_or_na, "Top-1 (moving points)": pct_or_na, "Route continuity": pct_or_na})}</div>
+<p class="note">Moving points exclude parked points (moved &lt; 20 m in 30 s): a parked car sits off-road, so its reference arc is ambiguous.
+Map: <a href="maps/train_00000001.html">train 00000001, predicted vs reference route</a>.</p>
+<h3>Decoder parameter sweep ({len(sw)} settings, classifier emissions, student_test)</h3>
+<p>Mean accuracy for each parameter value, averaged over the other parameters. Backward tolerance (how far GPS may jitter
+backwards on one arc and still count as standing still) is the largest lever; it plateaus at 30 m.</p>
+<div class="scroll">{table(sweep_effect, {"Value": lambda v: f"{v:g}", "Mean top-1 (all points)": pct, "Mean top-1 (moving points)": pct})}</div>
+<p class="note">Decoder settings were chosen on student_test, which the guidelines permit; the selected settings are still to be checked on train trips.
+Full grid: <code>results/decoder_sweep_student_test.csv</code>.</p>
+
+<h2>7. In progress</h2>
 <ul>
-<li>Bayesian hyperparameter optimisation (Optuna TPE) of the selected model.</li>
-<li>Classifier probabilities as HMM emissions, and classifier-only vs classifier + HMM comparison.</li>
+<li>Check the tuned decoder settings on train trips; switch the API to classifier emissions with the tuned decoder.</li>
 <li>Two-laptop deployment: FastAPI backend and evaluator UI are working on one machine.</li>
 </ul>
 </main></body></html>"""
