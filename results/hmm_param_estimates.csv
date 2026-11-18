@@ -1,0 +1,2 @@
+partition,labels,n_trips,n_points,n_points_dropped_far,n_pairs,median_dist_to_ref_m,p95_dist_to_ref_m,sigma_m,median_abs_route_minus_gc_m,beta_m
+train,A obs_labels_train.csv,80,187879,20538,179962,5.003526596309633,20.249923859439956,7.418228531688661,1.2101570998553406,1.74588764665787
