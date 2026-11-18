@@ -7,7 +7,6 @@
   "search_factor": 2.0,
   "search_slack_m": 300.0,
   "emission": "distance",
-  "candidate_radius_m": 50.0,
-  "candidate_k": 8,
+  "candidates": "A src/build_candidates.py trip_features (radius 50 m, all arcs)",
   "note": "sigma/beta estimated on train (src/estimate_hmm_params.py); not yet tuned"
 }

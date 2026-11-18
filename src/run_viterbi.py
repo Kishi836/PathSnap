@@ -1,16 +1,16 @@
 """Run the HMM/Viterbi decoder on train / student_test trips and score it (role C).
 
-Phase 1:  python -m src.run_viterbi --split train --trips 00000001
-All dev:  python -m src.run_viterbi --split student_test --trips all
+Phase 1:  python -m src.run_viterbi --split train --trips 00000001 --save-config
+All dev:  python -m src.run_viterbi --split student_test --trips all --no-map
 
-Inputs (uses A's files when they exist, otherwise the stand-ins in src/standins.py):
+Inputs (role A, from `python src/build_candidates.py`):
   results/candidates_{split}.parquet,  results/obs_labels_{split}.csv
 Outputs:
   results/viterbi/{split}_{trip}_points.csv   per-point predictions + diagnostics
   results/viterbi_runs.csv                    one row per trip per run (appended)
   results/maps/{split}_{trip}.html            folium map
   models/hmm_config.json                      decoder params for D
-Never run on the evaluator partition: the reference route is used here for scoring.
+Never run on the evaluator partition: the reference labels are used here for scoring.
 """
 from __future__ import annotations
 
@@ -22,12 +22,12 @@ import numpy as np
 import pandas as pd
 
 from .maps import trip_map
-from .network import ROOT, RoadGraph, list_trips, load_trip, route_continuity
-from .standins import reference_labels, simple_candidates
+from .network import ROOT, RoadGraph, list_trips, load_obs_labels, load_trip, route_continuity
 from .viterbi import HMMParams, decode, top1
 
 RESULTS = ROOT / "results"
 ALLOWED_SPLITS = ("train", "student_test")
+CAND_COLS = ["trip_id", "obs_idx", "arc_id", "label", "f_dist"]
 
 
 def default_params() -> HMMParams:
@@ -40,24 +40,12 @@ def default_params() -> HMMParams:
     return p
 
 
-def load_candidates(trip, graph, ref, split):
+def load_candidates(split: str):
     path = RESULTS / f"candidates_{split}.parquet"
-    if path.exists():
-        df = pd.read_parquet(path, filters=[("trip_id", "==", trip.trip_id)])
-        return df, "A"
-    return simple_candidates(trip, graph, ref), "standin"
-
-
-def load_obs_labels(trip, graph, split):
-    path = RESULTS / f"obs_labels_{split}.csv"
-    if path.exists():
-        df = pd.read_csv(path, dtype={"trip_id": str})
-        df = df[df.trip_id == trip.trip_id].set_index("obs_idx")["ref_arc_id"]
-        ref = np.full(len(trip.track), -1, np.int64)
-        ok = df.notna()
-        ref[df.index[ok].to_numpy()] = df[ok].astype(np.int64).to_numpy()
-        return ref, "A"
-    return reference_labels(trip, graph), "standin"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} missing - run `python src/build_candidates.py` (role A) first")
+    df = pd.read_parquet(path, columns=CAND_COLS)
+    return {tid: g.reset_index(drop=True) for tid, g in df.groupby("trip_id")}
 
 
 def jaccard(a, b):
@@ -65,35 +53,33 @@ def jaccard(a, b):
     return len(a & b) / max(1, len(a | b))
 
 
-def run_trip(trip_id, split, params, make_map=True):
+def run_trip(trip_id, split, params, cands, labels, make_map=True):
     trip = load_trip(trip_id, split)
     graph = RoadGraph(trip)
-    ref, label_src = load_obs_labels(trip, graph, split)
-    cands, cand_src = load_candidates(trip, graph, ref, split)
     T = len(trip.track)
+    ref = labels["ref_arc_id"].reindex(range(T)).fillna(-1).to_numpy(np.int64)
     has_ref = ref >= 0
+    # points whose reference arc is among the candidates (B trains/evaluates on these)
+    hit = np.zeros(T, bool)
+    hit[cands.loc[cands.label == 1, "obs_idx"].to_numpy()] = True
 
-    # baseline "classifier-only" stand-in: nearest candidate arc per point
-    dist_col = "f_dist_m" if "f_dist_m" in cands else None
-    score = -cands[dist_col].to_numpy() if dist_col else None
     t0 = time.perf_counter()
     pred, info = decode(cands, None, graph, params, return_info=True)
     t_dec = time.perf_counter() - t0
-    if score is None:  # recompute distance if A's table names it differently
-        from .viterbi import _snap
-        score = -_snap(graph, trip.gps_xy, cands.obs_idx.to_numpy(), cands.arc_id.to_numpy())[0]
-    base = top1(cands, score, T)
+    # baseline "classifier-only" stand-in until B's model exists: nearest candidate arc
+    base = top1(cands, -cands["f_dist"].to_numpy(), T)
 
-    lab = cands[cands.label == 1].obs_idx.nunique() if "label" in cands else np.nan
     row = {
         "run_at": datetime.now().isoformat(timespec="seconds"), "split": split, "trip_id": trip_id,
-        "emission": "distance", "candidates_from": cand_src, "labels_from": label_src,
+        "emission": "distance", "candidates_from": "A", "labels_from": "A",
         **{k: v for k, v in vars(params).items()},
         "n_points": T, "n_ref_points": int(has_ref.sum()),
-        "candidate_miss_rate": 1 - lab / max(1, has_ref.sum()),
+        "candidate_miss_rate": float(1 - hit[has_ref].mean()),
         "points_without_candidates": int((info.n_candidates == 0).sum()),
         "acc_top1": float(np.mean(base[has_ref] == ref[has_ref])),
         "acc_viterbi": float(np.mean(pred[has_ref] == ref[has_ref])),
+        "acc_top1_on_hits": float(np.mean(base[hit] == ref[hit])),
+        "acc_viterbi_on_hits": float(np.mean(pred[hit] == ref[hit])),
         "continuity_top1": route_continuity(base, graph),
         "continuity_viterbi": route_continuity(pred, graph),
         "continuity_reference": route_continuity(ref[has_ref], graph),
@@ -130,10 +116,11 @@ def main():
     if a.beta:
         params.beta_m = a.beta
     trips = list_trips(a.split) if a.trips == ["all"] else a.trips
+    cands, labels = load_candidates(a.split), load_obs_labels(a.split)
 
     rows = []
     for tid in trips:
-        r = run_trip(tid, a.split, params, make_map=not a.no_map)
+        r = run_trip(tid, a.split, params, cands[tid], labels[tid], make_map=not a.no_map)
         rows.append(r)
         print(f"{a.split} {tid}: top1 {r['acc_top1']:.3f} -> viterbi {r['acc_viterbi']:.3f} | "
               f"continuity {r['continuity_top1']:.3f} -> {r['continuity_viterbi']:.3f} "
@@ -143,10 +130,13 @@ def main():
     log = RESULTS / "viterbi_runs.csv"
     df.to_csv(log, mode="a", header=not log.exists(), index=False)
     if len(df) > 1:
-        print(df[["acc_top1", "acc_viterbi", "continuity_top1", "continuity_viterbi"]].mean().round(4).to_string())
+        w = df.n_ref_points / df.n_ref_points.sum()
+        cols = ["candidate_miss_rate", "acc_top1", "acc_viterbi", "acc_viterbi_on_hits",
+                "continuity_top1", "continuity_viterbi"]
+        print("point-weighted mean:", (df[cols].mul(w, axis=0).sum()).round(4).to_dict())
     if a.save_config:
         params.to_json(ROOT / "models" / "hmm_config.json", emission="distance",
-                       candidate_radius_m=50.0, candidate_k=8,
+                       candidates="A src/build_candidates.py trip_features (radius 50 m, all arcs)",
                        note="sigma/beta estimated on train (src/estimate_hmm_params.py); not yet tuned")
         print("saved models/hmm_config.json")
 

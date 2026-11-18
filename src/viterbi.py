@@ -36,7 +36,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .network import RoadGraph, haversine_m, point_to_segments
+from .network import RoadGraph, haversine_m
 
 
 @dataclass
@@ -72,9 +72,7 @@ def classifier_emission_logp(prob: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 def _snap(graph: RoadGraph, gps_xy: np.ndarray, obs_idx: np.ndarray, arc_id: np.ndarray):
     """Exact distance and fraction along each candidate arc (recomputed, so we do not
     depend on which f_* columns A's table happens to contain)."""
-    p = gps_xy[obs_idx]
-    return point_to_segments(p[:, 0], p[:, 1], graph.ax[arc_id], graph.ay[arc_id],
-                             graph.bx[arc_id], graph.by[arc_id])
+    return graph.snap(gps_xy[obs_idx], arc_id)
 
 
 def decode(cands: pd.DataFrame, emission_logp: np.ndarray | None, graph: RoadGraph,

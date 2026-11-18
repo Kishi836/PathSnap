@@ -1,20 +1,16 @@
 """Road-network helpers for PathSnap (role C, shared with B).
 
-Loads one trip (track + its own road network), converts geometry to metres,
-and answers the graph questions the HMM needs:
+Loading, projection and point-to-segment geometry come from A's ``src/data.py``, so
+the decoder sees exactly the same coordinates as the candidate features. This module
+adds the graph questions the HMM needs:
 
 * ``connected(a, b)``      -- same arc, or arcs[a].to == arcs[b].from
 * ``route_distance(...)``  -- driving distance between two positions on arcs
                               (bounded Dijkstra on the node graph, weights in metres)
 * ``route_continuity(...)``-- metric: share of consecutive predictions that are connected
 
-Distances
----------
-Coordinates are lon/lat degrees, so we never take Euclidean distance on them.
-* Arc lengths and GPS-to-GPS distances use the haversine (great-circle) formula.
-* Point-to-arc distances use a local equirectangular projection centred on the
-  trip's GPS track. Over a city-sized area the scale error is ~0.1-0.2 %, i.e.
-  well below GPS noise (several metres), and it lets us do fast vector maths.
+Distances: arc lengths and GPS-to-GPS distances use the haversine (great-circle)
+formula; point-to-arc distances use A's local equirectangular projection (metres).
 """
 from __future__ import annotations
 
@@ -24,13 +20,12 @@ from pathlib import Path
 
 import numpy as np
 
-EARTH_R = 6_371_008.8  # mean Earth radius, metres
+from . import data
 
+EARTH_R = data.EARTH_R
 ROOT = Path(__file__).resolve().parents[1]
-DATA_ROOT = ROOT / "Student folder" / "Student folder"
 
 
-# --------------------------------------------------------------------------- geometry
 def haversine_m(lon1, lat1, lon2, lat2):
     """Great-circle distance in metres (vectorised)."""
     lon1, lat1, lon2, lat2 = map(np.radians, (lon1, lat1, lon2, lat2))
@@ -38,77 +33,41 @@ def haversine_m(lon1, lat1, lon2, lat2):
     return 2 * EARTH_R * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
 
 
-@dataclass
-class LocalProjection:
-    """Equirectangular projection around (lon0, lat0) -> metres (x east, y north)."""
-    lon0: float
-    lat0: float
-
-    def forward(self, lon, lat):
-        k = np.pi / 180 * EARTH_R
-        x = (np.asarray(lon) - self.lon0) * k * np.cos(np.radians(self.lat0))
-        y = (np.asarray(lat) - self.lat0) * k
-        return x, y
-
-
-def point_to_segments(px, py, ax, ay, bx, by):
-    """Distance from point(s) P to segment(s) AB, plus the fraction t in [0,1] along AB.
-
-    All inputs are broadcastable arrays in metres.
-    """
-    dx, dy = bx - ax, by - ay
-    seg2 = dx * dx + dy * dy
-    with np.errstate(invalid="ignore", divide="ignore"):
-        t = ((px - ax) * dx + (py - ay) * dy) / seg2
-    t = np.where(seg2 > 0, np.clip(t, 0.0, 1.0), 0.0)
-    cx, cy = ax + t * dx, ay + t * dy
-    return np.hypot(px - cx, py - cy), t
-
-
-# --------------------------------------------------------------------------- trip loading
-def trip_dir(trip_id: str, split: str) -> Path:
-    return DATA_ROOT / split / trip_id / trip_id
-
-
 def list_trips(split: str) -> list[str]:
-    return sorted(p.name for p in (DATA_ROOT / split).iterdir() if p.is_dir())
+    return data.trip_ids(split)
 
 
 @dataclass
 class Trip:
+    """One trip as numpy arrays (built from A's ``data.load_trip``)."""
     trip_id: str
     split: str
     track: np.ndarray            # (T, 3) lon, lat, t
     nodes: np.ndarray            # (N, 2) lon, lat
     arcs: np.ndarray             # (A, 2) from_node, to_node
-    route: np.ndarray | None     # (R,) reference arc ids in driving order (scoring only!)
-    proj: LocalProjection = field(init=False)
+    route: np.ndarray | None     # (R,) reference arc ids (scoring only, never used in decode)
+    proj: data.LocalProjection = field(init=False)
 
     def __post_init__(self):
-        self.proj = LocalProjection(float(np.median(self.track[:, 0])), float(np.median(self.track[:, 1])))
+        # same projection centre as A's trip_features (track mean)
+        self.proj = data.LocalProjection(self.track[:, 1].mean(), self.track[:, 0].mean())
 
     @property
     def gps_xy(self):
-        return np.column_stack(self.proj.forward(self.track[:, 0], self.track[:, 1]))
+        return self.proj(self.track[:, 0], self.track[:, 1])
 
     @property
     def node_xy(self):
-        return np.column_stack(self.proj.forward(self.nodes[:, 0], self.nodes[:, 1]))
+        return self.proj(self.nodes[:, 0], self.nodes[:, 1])
 
 
 def load_trip(trip_id: str, split: str = "train", with_route: bool = True) -> Trip:
-    base = trip_dir(trip_id, split)
-    track = np.loadtxt(f"{base}.track", ndmin=2)
-    nodes = np.loadtxt(f"{base}.nodes", ndmin=2)
-    arcs = np.loadtxt(f"{base}.arcs", dtype=np.int64, ndmin=2)
-    route = None
-    route_file = Path(f"{base}.route")
-    if with_route and route_file.exists():
-        route = np.loadtxt(route_file, dtype=np.int64, ndmin=1)
-    return Trip(trip_id, split, track, nodes, arcs, route)
+    t = data.load_trip(split, trip_id)
+    route = t["route"].arc_id.to_numpy(np.int64) if (with_route and t["route"] is not None) else None
+    return Trip(trip_id, split, t["track"][["lon", "lat", "t"]].to_numpy(float),
+                t["nodes"][["lon", "lat"]].to_numpy(float), t["arcs"].to_numpy(np.int64), route)
 
 
-# --------------------------------------------------------------------------- graph
 class RoadGraph:
     """Directed road graph of one trip. Arcs are straight segments between nodes."""
 
@@ -119,10 +78,9 @@ class RoadGraph:
         n = len(trip.nodes)
         lon, lat = trip.nodes[:, 0], trip.nodes[:, 1]
         self.arc_len = haversine_m(lon[self.arc_from], lat[self.arc_from], lon[self.arc_to], lat[self.arc_to])
-        xy = trip.node_xy
-        self.node_xy = xy
-        self.ax, self.ay = xy[self.arc_from, 0], xy[self.arc_from, 1]
-        self.bx, self.by = xy[self.arc_to, 0], xy[self.arc_to, 1]
+        self.node_xy = trip.node_xy
+        self.a_xy = self.node_xy[self.arc_from]   # (A, 2) arc start, metres
+        self.b_xy = self.node_xy[self.arc_to]     # (A, 2) arc end, metres
 
         # CSR adjacency (node -> node, weight = arc length). Keep the shortest of parallel arcs.
         order = np.lexsort((self.arc_len, self.arc_to, self.arc_from))
@@ -138,6 +96,10 @@ class RoadGraph:
 
         self._cache: dict[int, tuple[float, dict[int, float]]] = {}
         self._cache_size = dijkstra_cache_size
+
+    def snap(self, points_xy: np.ndarray, arc_ids: np.ndarray):
+        """Distance (m) and fraction along the arc for aligned (point, arc) pairs."""
+        return data.point_segment_dist(points_xy, self.a_xy[arc_ids], self.b_xy[arc_ids])
 
     # ---- connectivity -------------------------------------------------------
     def connected(self, a: int, b: int) -> bool:
@@ -193,7 +155,6 @@ class RoadGraph:
         return np.inf if d is None else rest_a + d + head_b
 
 
-# --------------------------------------------------------------------------- metrics
 def route_continuity(pred_arcs, graph: RoadGraph) -> float:
     """Share of consecutive predicted pairs (ignoring missing = -1) that are directly connected.
 
@@ -206,3 +167,13 @@ def route_continuity(pred_arcs, graph: RoadGraph) -> float:
     a, b = p[:-1], p[1:]
     ok = (a == b) | (graph.arc_to[a] == graph.arc_from[b])
     return float(ok.mean())
+
+
+def load_obs_labels(split: str):
+    """A's per-point reference labels: {trip_id: DataFrame indexed by obs_idx}."""
+    import pandas as pd
+    path = ROOT / "results" / f"obs_labels_{split}.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} missing - run `python src/build_candidates.py` (role A) first")
+    df = pd.read_csv(path, dtype={"trip_id": str})
+    return {tid: g.set_index("obs_idx").sort_index() for tid, g in df.groupby("trip_id")}
