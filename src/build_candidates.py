@@ -21,6 +21,9 @@ OUT = Path(__file__).resolve().parents[1] / "results"
 RADIUS_M = 50.0          # EDA: route within 50 m for 99.9% of student_test points, ~12 candidates/point
 HEADING_WINDOW = 2       # GPS heading from point i-2 to i+2
 MIN_HEADING_DISP_M = 5.0 # below this displacement the heading is noise
+# Rejected experiment: widening the window up to i-15..i+15 until the car has moved MIN_HEADING_DISP_M.
+# Set to 15 (and rebuild candidates, refit the MLP) to reproduce results/experiment_heading_window.csv.
+MAX_HEADING_WINDOW = HEADING_WINDOW
 
 
 def route_labels(xy, a, b, route):
@@ -54,14 +57,19 @@ def route_labels(xy, a, b, route):
 
 
 def gps_heading(xy):
-    """Unit direction of travel per point (from i-W to i+W) and whether it is reliable."""
+    """Unit direction of travel per point (from i-W to i+W) and whether it is reliable.
+
+    With MAX_HEADING_WINDOW > HEADING_WINDOW the window widens until the car has moved MIN_HEADING_DISP_M.
+    """
     n = len(xy)
-    lo = np.clip(np.arange(n) - HEADING_WINDOW, 0, n - 1)
-    hi = np.clip(np.arange(n) + HEADING_WINDOW, 0, n - 1)
-    v = xy[hi] - xy[lo]
-    norm = np.linalg.norm(v, axis=1)
-    valid = norm >= MIN_HEADING_DISP_M
-    return v / np.maximum(norm, 1e-9)[:, None], valid
+    idx = np.arange(n)
+    v = np.zeros_like(xy)
+    valid = np.zeros(n, bool)
+    for w in range(HEADING_WINDOW, max(HEADING_WINDOW, MAX_HEADING_WINDOW) + 1):
+        d = xy[np.clip(idx + w, 0, n - 1)] - xy[np.clip(idx - w, 0, n - 1)]
+        ok = ~valid & (np.linalg.norm(d, axis=1) >= MIN_HEADING_DISP_M)
+        v[ok], valid[ok] = d[ok], True
+    return v / np.maximum(np.linalg.norm(v, axis=1), 1e-9)[:, None], valid
 
 
 def trip_features(trip):
