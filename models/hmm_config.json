@@ -1,0 +1,13 @@
+{
+  "sigma_m": 7.42,
+  "beta_m": 1.75,
+  "backward_tol_m": 10.0,
+  "gap_break_s": 60.0,
+  "log_unreachable": -1000.0,
+  "search_factor": 2.0,
+  "search_slack_m": 300.0,
+  "emission": "distance",
+  "candidate_radius_m": 50.0,
+  "candidate_k": 8,
+  "note": "sigma/beta estimated on train (src/estimate_hmm_params.py); not yet tuned"
+}
