@@ -1,0 +1,7 @@
+fold 1: 16 held-out trips
+fold 2: 16 held-out trips
+fold 3: 16 held-out trips
+fold 4: 16 held-out trips
+fold 5: 16 held-out trips
+default decoder: MLP alone 0.8821 -> HMM 0.9098 (moving) | all points 0.7920
+tuned decoder: MLP alone 0.8821 -> HMM 0.9339 (moving) | all points 0.8325
