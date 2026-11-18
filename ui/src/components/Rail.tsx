@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Health, Prediction, Stage, TripSummary } from "../api";
 import { duration, int, ms, pct } from "../format";
 
@@ -135,7 +135,7 @@ export function TripList({
                 >
                   <span className={`text-[15px] ${active ? "font-semibold text-chart" : "text-chart/90"}`}>{t.trip_id}</span>
                   <span className={`text-[13px] ${done?.metrics.scored ? "text-route" : "text-faint"}`}>
-                    {done ? (done.metrics.scored ? pct(done.metrics.top1_accuracy) : "matched") : ""}
+                    {done ? (done.metrics.scored ? pct(done.metrics.top1_accuracy_moving) : "matched") : ""}
                   </span>
                   <span className="col-span-2 text-[12.5px] text-muted">
                     {t.length_km.toFixed(1)} km, {int(t.n_points)} fixes, {duration(t.duration_s)}
@@ -215,8 +215,15 @@ export function Result({ p, roundTripMs }: { p: Prediction; roundTripMs: number 
       : "Distance baseline (no exported classifier yet)";
   const total = STAGES.reduce((s, st) => s + p.timings_ms[st.key], 0) || 1;
 
+  // The result renders below the trip list; bring it on screen when a new prediction arrives.
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    ref.current?.scrollIntoView?.({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }, [p.request_id]);
+
   return (
-    <section aria-label={`Result for trip ${p.trip_id}`} aria-live="polite" className="px-5 py-5">
+    <section ref={ref} aria-label={`Result for trip ${p.trip_id}`} aria-live="polite" className="px-5 py-5">
       {m.scored ? (
         <>
           <p className="text-[13px] text-muted">GPS fixes matched to the correct road (parked points excluded)</p>
