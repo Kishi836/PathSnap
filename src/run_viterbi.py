@@ -99,8 +99,9 @@ def run_trip(trip_id, split, params, cands, labels, make_map=True, prob=None):
     (RESULTS / "viterbi").mkdir(parents=True, exist_ok=True)
     out.to_csv(RESULTS / "viterbi" / f"{split}_{trip_id}_points.csv", index=False)
     if make_map:
-        title = (f"{split} {trip_id} — Viterbi acc {row['acc_viterbi']:.1%} "
-                 f"(nearest-arc {row['acc_top1']:.1%})")
+        source = "MLP alone" if prob is not None else "nearest arc"
+        title = (f"{split} {trip_id}, moving fixes: HMM {row['acc_viterbi_moving']:.1%} "
+                 f"({source} {row['acc_top1_moving']:.1%})")
         trip_map(graph, pred, ref, title=title, out_path=RESULTS / "maps" / f"{split}_{trip_id}.html")
     return row
 
