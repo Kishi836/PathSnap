@@ -2,3 +2,11 @@
 __pycache__/
 *.pyc
 *.py[cod]
+# Role D: runtime logs, frontend build artefacts, local env files
+logs/
+node_modules/
+ui/dist/
+.env.local
+.env.*.local
+.pytest_cache/
+*.tsbuildinfo
