@@ -82,7 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.method != "OPTIONS" and request.url.path not in QUIET_PATHS:
             client = request.client.host if request.client else "?"
             level = logging.INFO if response.status_code < 500 else logging.ERROR
-            log.log(level, "%-15s %-4s %-14s %d %7.0f ms  %s", client, request.method, request.url.path,
+            log.log(level, "%-15s %-4s %-24s %d %6.0f ms  %s", client, request.method, request.url.path,
                     response.status_code, ms, request.state.log_extra)
         return response
 
