@@ -117,11 +117,13 @@ def suggest_parameters(trial, model_name):
 
     elif model_name == "MLP":
 
+        # Optuna stores only plain values, so layer shapes are named as strings, e.g. "64-32"
+        layers = trial.suggest_categorical(
+            "hidden_layer_sizes", ["32", "64", "64-32", "128-64"]
+        )
+
         return {
-            "classifier__hidden_layer_sizes": trial.suggest_categorical(
-                "hidden_layer_sizes",
-                [(32,), (64,), (64, 32), (128, 64)]
-            ),
+            "classifier__hidden_layer_sizes": tuple(int(n) for n in layers.split("-")),
             "classifier__activation": trial.suggest_categorical(
                 "activation", ["relu", "tanh"]
             ),
@@ -131,8 +133,10 @@ def suggest_parameters(trial, model_name):
             "classifier__learning_rate_init": trial.suggest_float(
                 "learning_rate_init", 0.0001, 0.01, log=True
             ),
+            # ~292k rows per fold: batches below 128 mean thousands of updates per epoch and
+            # several hours for the study, so the search covers 128-512
             "classifier__batch_size": trial.suggest_categorical(
-                "batch_size", [32, 64, 128]
+                "batch_size", [128, 256, 512]
             )
         }
 
@@ -253,7 +257,8 @@ def run_optimization(
     X,
     y,
     groups,
-    n_trials
+    n_trials,
+    worker=0
 ):
 
     safe_name = re.sub(
@@ -268,8 +273,10 @@ def run_optimization(
         f"sqlite:///{STUDY_DB.resolve().as_posix()}"
     )
 
+    # Several worker processes can share this SQLite study; each needs its own seed,
+    # or they would all propose the same first trials.
     sampler = optuna.samplers.TPESampler(
-        seed=RANDOM_SEED
+        seed=RANDOM_SEED + worker
     )
 
     pruner = optuna.pruners.MedianPruner(
@@ -387,6 +394,13 @@ def main():
         help="Number of Optuna trials."
     )
 
+    parser.add_argument(
+        "--worker",
+        type=int,
+        default=0,
+        help="Worker number when several processes share the study (sets the sampler seed)."
+    )
+
     args = parser.parse_args()
 
     if args.trials < 1:
@@ -405,7 +419,8 @@ def main():
         X,
         y,
         groups,
-        args.trials
+        args.trials,
+        args.worker
     )
 
     save_results(

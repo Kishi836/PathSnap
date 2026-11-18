@@ -1,0 +1,32 @@
+
+TRAINING DATA SUMMARY
+--------------------------------------------------
+Rows: 365536
+Features: 15
+Trips: 80
+
+BAYESIAN OPTIMISATION
+=======================================================
+Selected model: MLP
+Trials to run: 2
+Validation: 5-fold GroupKFold
+Objective: Mean CV Macro F1
+Sampler: TPE
+  0%|          | 0/2 [00:00<?, ?it/s]Best trial: 0. Best value: 0.918284:   0%|          | 0/2 [01:17<?, ?it/s]Best trial: 0. Best value: 0.918284:  50%|#####     | 1/2 [01:17<01:17, 77.95s/it]Best trial: 0. Best value: 0.918284:  50%|#####     | 1/2 [02:34<01:17, 77.95s/it]Best trial: 0. Best value: 0.918284: 100%|##########| 2/2 [02:34<00:00, 77.09s/it]Best trial: 0. Best value: 0.918284: 100%|##########| 2/2 [02:34<00:00, 77.22s/it]
+
+OPTIMISATION COMPLETED
+-------------------------------------------------------
+Best CV Macro F1: 0.91828
+Best parameters:
+hidden_layer_sizes: 64
+activation: relu
+alpha: 1.7073967431528103e-05
+learning_rate_init: 0.005399484409787433
+batch_size: 256
+
+RESULTS SAVED
+Study database: C:\Users\Admin\OneDrive\PES UNIVERSITY CSE\5th Semester\Machine Learning\Hackathon\results\optuna_study.db
+Trial history: C:\Users\Admin\OneDrive\PES UNIVERSITY CSE\5th Semester\Machine Learning\Hackathon\results\optuna_trials\mlp_trials.csv
+Best parameters: C:\Users\Admin\OneDrive\PES UNIVERSITY CSE\5th Semester\Machine Learning\Hackathon\results\mlp_best_params.json
+
+Phase 4 optimisation completed!

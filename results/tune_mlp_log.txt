@@ -1,0 +1,15 @@
+
+TRAINING DATA SUMMARY
+--------------------------------------------------
+Rows: 365536
+Features: 15
+Trips: 80
+
+BAYESIAN OPTIMISATION
+=======================================================
+Selected model: MLP
+Trials to run: 30
+Validation: 5-fold GroupKFold
+Objective: Mean CV Macro F1
+Sampler: TPE
+  0%|          | 0/30 [00:00<?, ?it/s]Best trial: 0. Best value: 0.918284:   0%|          | 0/30 [02:28<?, ?it/s]Best trial: 0. Best value: 0.918284:   3%|3         | 1/30 [02:28<1:11:52, 148.71s/it]Best trial: 0. Best value: 0.918284:   3%|3         | 1/30 [04:18<1:11:52, 148.71s/it]Best trial: 0. Best value: 0.918284:   7%|6         | 2/30 [04:18<58:36, 125.57s/it]  Best trial: 0. Best value: 0.918284:   7%|6         | 2/30 [15:11<58:36, 125.57s/it]Best trial: 0. Best value: 0.918284:  10%|#         | 3/30 [15:11<2:44:59, 366.66s/it]Best trial: 0. Best value: 0.918284:  10%|#         | 3/30 [16:27<2:44:59, 366.66s/it]Best trial: 0. Best value: 0.918284:  13%|#3        | 4/30 [16:27<1:49:06, 251.78s/it]Best trial: 0. Best value: 0.918284:  13%|#3        | 4/30 [18:27<1:49:06, 251.78s/it]Best trial: 0. Best value: 0.918284:  17%|#6        | 5/30 [18:27<1:25:08, 204.35s/it]Best trial: 0. Best value: 0.918284:  17%|#6        | 5/30 [19:09<1:25:08, 204.35s/it]Best trial: 0. Best value: 0.918284:  20%|##        | 6/30 [19:09<59:35, 148.99s/it]  

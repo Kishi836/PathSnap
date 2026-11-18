@@ -46,6 +46,8 @@ class HMMParams:
     backward_tol_m: float = 10.0   # same-arc backward jitter treated as standing still
     gap_break_s: float = 60.0      # split trip into segments at larger time gaps
     log_unreachable: float = -1000.0
+    emission_weight: float = 1.0   # scales classifier log P against the transitions (classifier emissions only)
+    stationary_hold: str = "none"  # "prev" / "next": parked points keep the arc of the nearest moving point
     search_factor: float = 2.0     # Dijkstra radius = factor * d_gc + slack
     search_slack_m: float = 300.0
 
@@ -156,6 +158,20 @@ def decode(cands: pd.DataFrame, emission_logp: np.ndarray | None, graph: RoadGra
         first = int(np.argmax(~filled))
         prev[prev < 0] = first
         pred = pred[prev]
+    # a parked car does not change road: give each run of parked points the arc of the nearest
+    # moving point before it ("prev") or after it ("next"). Uses only the GPS-derived f_stationary flag.
+    if p.stationary_hold != "none" and "f_stationary" in cands:
+        st = np.zeros(T, bool)
+        st[cands["obs_idx"].to_numpy()[cands["f_stationary"].to_numpy() == 1]] = True
+        if (~st).any():
+            idx = np.arange(T)
+            if p.stationary_hold == "prev":
+                src = np.maximum.accumulate(np.where(~st, idx, -1))
+                src[src < 0] = int(np.argmax(~st))
+            else:
+                src = np.minimum.accumulate(np.where(~st, idx, T)[::-1])[::-1]
+                src[src >= T] = T - 1 - int(np.argmax(~st[::-1]))
+            pred = pred[src]
     if not return_info:
         return pred
     n_cand = np.bincount(obs, minlength=T)

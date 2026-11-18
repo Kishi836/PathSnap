@@ -1,0 +1,3 @@
+experiment,variant,mlp_top1,hmm_tuned_top1_all,hmm_tuned_top1_moving
+heading window,fixed i-2..i+2 (kept),0.8621,0.934,0.9629
+heading window,adaptive up to i-15..i+15 until 5 m moved (rejected),0.8635,0.9188,0.9602
